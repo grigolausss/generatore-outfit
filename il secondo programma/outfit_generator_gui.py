@@ -358,10 +358,11 @@ class OutfitGeneratorApp:
             selected_font=self.selected_font,
             blur_slider=self.blur_slider,
             brightness_slider=self.brightness_slider,
-            spacing_slider=self.spacing_slider,
+                spacing_slider=self.spacing_slider, # Vertical spacing between shirt/pants
             size_main_slider=self.size_main_slider,
             size_accessory_slider=self.size_accessory_slider,
-            object_spacing_slider=self.accessory_slider,  # Corretto: usa accessory_slider per il numero di accessori
+                accessory_count_slider_obj=self.accessory_slider, # Slider for number of accessories
+                actual_object_spacing_slider_obj=self.object_spacing_slider, # Slider for spacing between objects
             font_color_rgb=self.selected_font_color_rgb,
             root=self.root
         )
