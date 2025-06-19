@@ -9,7 +9,7 @@ import traceback
 class OutfitGeneratorLogic:
     TARGET_WIDTH = 1080
     TARGET_HEIGHT = 1920
-    ACCESSORY_MARGIN = 100  # General margin for accessories from canvas edges
+    SAFE_MARGIN = 100  # General margin for accessories from canvas edges
     WATERMARK_MARGIN_TOP = 100
     WATERMARK_MARGIN_BOTTOM_TIKTOK = 200
     ACCESSORY_PRIORITIES = {
@@ -22,6 +22,7 @@ class OutfitGeneratorLogic:
     DEFAULT_PRIORITY = 10
     MIN_CONTRAST_THRESHOLD = 2.0
     MIN_TEXT_CONTRAST_THRESHOLD = 3.0
+    MIN_ACCESSORY_DIMENSION_THRESHOLD = 50
 
     def __init__(self):
         script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -142,10 +143,10 @@ class OutfitGeneratorLogic:
         return Image.new("RGBA", (width, height), bg_color)
 
     def is_position_safe(self, x, y, item_w, item_h):
-        safe_left = self.ACCESSORY_MARGIN
-        safe_top = self.ACCESSORY_MARGIN
-        safe_right = self.TARGET_WIDTH - self.ACCESSORY_MARGIN
-        safe_bottom = self.TARGET_HEIGHT - self.ACCESSORY_MARGIN
+        safe_left = self.SAFE_MARGIN
+        safe_top = self.SAFE_MARGIN
+        safe_right = self.TARGET_WIDTH - self.SAFE_MARGIN
+        safe_bottom = self.TARGET_HEIGHT - self.SAFE_MARGIN
 
         return (x >= safe_left and x + item_w <= safe_right and
                 y >= safe_top and y + item_h <= safe_bottom)
@@ -255,17 +256,17 @@ class OutfitGeneratorLogic:
             # Check if essential category paths are selected (assuming tk.StringVar for paths)
             # If category_paths stores StringVars from the GUI, .get() would be needed here.
             # Current implementation assumes paths are direct strings after __init__ or GUI updates.
-            if not self.category_paths.get("maglie") or not self.load_images_from_folder(self.category_paths["maglie"]):
+            if not self.category_paths.get("maglie") or not self.category_paths["maglie"].get() or not self.load_images_from_folder(self.category_paths["maglie"].get()):
                  messagebox.showerror("Errore", "La cartella 'maglie' non è selezionata o non contiene immagini.")
                  return
-            if not self.category_paths.get("pantaloni") or not self.load_images_from_folder(self.category_paths["pantaloni"]):
+            if not self.category_paths.get("pantaloni") or not self.category_paths["pantaloni"].get() or not self.load_images_from_folder(self.category_paths["pantaloni"].get()):
                  messagebox.showerror("Errore", "La cartella 'pantaloni' non è selezionata o non contiene immagini.")
                  return
-            if not self.category_paths.get("sfondi") or not self.load_images_from_folder(self.category_paths["sfondi"]):
+            if not self.category_paths.get("sfondi") or not self.category_paths["sfondi"].get() or not self.load_images_from_folder(self.category_paths["sfondi"].get()):
                  messagebox.showerror("Errore", "La cartella 'sfondi' non è selezionata o non contiene immagini.")
                  return
 
-            category_images = {category: self.load_images_from_folder(self.category_paths[category]) for category in self.accessory_types if self.category_paths.get(category)}
+            category_images = {category: self.load_images_from_folder(self.category_paths[category].get()) for category in self.accessory_types if self.category_paths.get(category) and self.category_paths[category].get()}
 
 
             optional_accessories = [cat for cat in self.accessory_types if cat not in ["maglie", "pantaloni", "sfondi"]]
@@ -314,6 +315,12 @@ class OutfitGeneratorLogic:
                 canvas.paste(background, (0, 0))
                 draw = ImageDraw.Draw(canvas)
 
+                safe_margin = self.SAFE_MARGIN
+                content_x_start = safe_margin
+                content_y_start = safe_margin
+                content_width = self.TARGET_WIDTH - 2 * safe_margin
+                content_height = self.TARGET_HEIGHT - 2 * safe_margin
+
                 occupied_areas = []
 
                 # Parametri di ridimensionamento
@@ -324,75 +331,44 @@ class OutfitGeneratorLogic:
                 # spacing is for vertical distance between shirt and pants
                 spacing = spacing_slider.get() * 3
 
-                content_width_for_main_items = self.TARGET_WIDTH - 2 * self.ACCESSORY_MARGIN
-                content_height_for_main_items = self.TARGET_HEIGHT - 2 * self.ACCESSORY_MARGIN
+                content_width_for_main_items = content_width # Use new content_width
+                content_height_for_main_items = content_height # Use new content_height
 
-                # Dimensioni degli oggetti principali
-                shirt_max_width = int(content_width_for_main_items * 0.5 * size_main_factor)
-                shirt_max_height = int(content_height_for_main_items * 0.35 * size_main_factor)
-                pants_max_width = int(content_width_for_main_items * 0.5 * size_main_factor)
-                pants_max_height = int(content_height_for_main_items * 0.35 * size_main_factor)
+                # Dimensioni degli oggetti principali (target sizes before aspect ratio preservation)
+                shirt_target_width = int(content_width * (0.6 * size_main_factor))
+                shirt_target_height = int(content_height * (0.4 * size_main_factor))
+                pants_target_width = int(content_width * (0.6 * size_main_factor))
+                pants_target_height = int(content_height * (0.4 * size_main_factor))
 
                 # Carica maglia e pantaloni
                 shirt_data = random.choice(category_images["maglie"])
                 shirt_img = self.fix_image_orientation(Image.open(shirt_data[0]).convert("RGBA"))
-                shirt_img = self.resize_image(shirt_img, shirt_max_width, shirt_max_height)
+                # Resize (thumbnail preserves aspect ratio, fitting within target_width/height)
+                shirt_img = self.resize_image(shirt_img, shirt_target_width, shirt_target_height)
                 shirt_name = shirt_data[1]
 
                 pants_data = random.choice(category_images["pantaloni"])
                 pants_img = self.fix_image_orientation(Image.open(pants_data[0]).convert("RGBA"))
-                pants_img = self.resize_image(pants_img, pants_max_width, pants_max_height)
+                # Resize (thumbnail preserves aspect ratio, fitting within target_width/height)
+                pants_img = self.resize_image(pants_img, pants_target_width, pants_target_height)
                 pants_name = pants_data[1]
 
-                # --- Main Garment Placement Strategy ---
-                # Randomly chooses 'center', 'left', or 'right' for the main garment block.
-                placement_options = ['center', 'left', 'right']
-                chosen_placement = random.choice(placement_options)
-
-                # Usable area for content, excluding accessory margins.
-                content_width = self.TARGET_WIDTH - 2 * self.ACCESSORY_MARGIN
-                content_height = self.TARGET_HEIGHT - 2 * self.ACCESSORY_MARGIN # For vertical centering of garment block
-
-                # X-coordinate calculation based on chosen placement
-                offset_amount = content_width // 7 # Amount to shift for 'left'/'right' placements
-
-                if chosen_placement == 'center':
-                    shirt_x = self.ACCESSORY_MARGIN + (content_width - shirt_img.width) // 2
-                    pants_x = self.ACCESSORY_MARGIN + (content_width - pants_img.width) // 2
-                elif chosen_placement == 'left':
-                    # Calculate centered position first, then apply offset
-                    base_center_x_shirt = self.ACCESSORY_MARGIN + (content_width - shirt_img.width) // 2
-                    base_center_x_pants = self.ACCESSORY_MARGIN + (content_width - pants_img.width) // 2
-                    shirt_x = base_center_x_shirt - offset_amount
-                    pants_x = base_center_x_pants - offset_amount
-                elif chosen_placement == 'right':
-                    # Calculate centered position first, then apply offset
-                    base_center_x_shirt = self.ACCESSORY_MARGIN + (content_width - shirt_img.width) // 2
-                    base_center_x_pants = self.ACCESSORY_MARGIN + (content_width - pants_img.width) // 2
-                    shirt_x = base_center_x_shirt + offset_amount
-                    pants_x = base_center_x_pants + offset_amount
-
-                # Ensure x positions are firmly within accessory margins and don't push content outside visual bounds.
-                # The min second argument should be the rightmost allowed start for the image.
-                shirt_x = max(self.ACCESSORY_MARGIN, min(shirt_x, self.TARGET_WIDTH - self.ACCESSORY_MARGIN - shirt_img.width))
-                pants_x = max(self.ACCESSORY_MARGIN, min(pants_x, self.TARGET_WIDTH - self.ACCESSORY_MARGIN - pants_img.width))
-
+                # --- Main Garment Placement Strategy (Simplified: Always Centered) ---
                 total_garment_height = shirt_img.height + pants_img.height + spacing
 
-                # Calculate initial Y to center the block within the content height
-                shirt_y = self.ACCESSORY_MARGIN + (content_height - total_garment_height) // 2
-
-                # Ensure shirt_y respects the top accessory margin
-                shirt_y = max(self.ACCESSORY_MARGIN, shirt_y)
-
-                # Ensure the entire block does not go below the bottom accessory margin
-                # (i.e., shirt_y + total_garment_height should not exceed self.TARGET_HEIGHT - self.ACCESSORY_MARGIN)
-                if shirt_y + total_garment_height > self.TARGET_HEIGHT - self.ACCESSORY_MARGIN:
-                    shirt_y = self.TARGET_HEIGHT - self.ACCESSORY_MARGIN - total_garment_height
-                    # Re-check against top margin in case of very large items
-                    shirt_y = max(self.ACCESSORY_MARGIN, shirt_y)
+                shirt_y = content_y_start + (content_height - total_garment_height) // 2
+                shirt_y = max(content_y_start, shirt_y) # Ensure it doesn't go above content_y_start
 
                 pants_y = shirt_y + shirt_img.height + spacing
+
+                shirt_x = content_x_start + (content_width - shirt_img.width) // 2
+                pants_x = content_x_start + (content_width - pants_img.width) // 2
+
+                # Ensure garments are within content boundaries (though centering should mostly handle this)
+                shirt_x = max(content_x_start, min(shirt_x, content_x_start + content_width - shirt_img.width))
+                pants_x = max(content_x_start, min(pants_x, content_x_start + content_width - pants_img.width))
+                shirt_y = max(content_y_start, min(shirt_y, content_y_start + content_height - total_garment_height))
+                # pants_y is dependent on shirt_y, if shirt_y is clamped, pants_y will follow.
 
                 canvas.paste(shirt_img, (shirt_x, shirt_y), shirt_img)
                 occupied_areas.append((shirt_x, shirt_y, shirt_img.width, shirt_img.height))
@@ -401,10 +377,10 @@ class OutfitGeneratorLogic:
                     text_width = draw.textlength(shirt_name, font=font) if font else 100
                     text_x = shirt_x + (shirt_img.width - text_width) // 2
                     text_y = shirt_y + shirt_img.height + 10
-                    if text_x + text_width > self.TARGET_WIDTH - self.ACCESSORY_MARGIN:
-                        text_x = self.TARGET_WIDTH - self.ACCESSORY_MARGIN - text_width
-                    if text_y + font_size > self.TARGET_HEIGHT - self.ACCESSORY_MARGIN: # Using font_size as proxy for text_height
-                        text_y = self.TARGET_HEIGHT - self.ACCESSORY_MARGIN - font_size
+                    if text_x + text_width > self.TARGET_WIDTH - self.SAFE_MARGIN:
+                        text_x = self.TARGET_WIDTH - self.SAFE_MARGIN - text_width
+                    if text_y + font_size > self.TARGET_HEIGHT - self.SAFE_MARGIN: # Using font_size as proxy for text_height
+                        text_y = self.TARGET_HEIGHT - self.SAFE_MARGIN - font_size
                     font_color = font_color_rgb
                     draw.text((text_x, text_y), shirt_name, font=font, fill=font_color)
                     occupied_areas.append((text_x, text_y, text_width, font_size))
@@ -416,10 +392,10 @@ class OutfitGeneratorLogic:
                     text_width = draw.textlength(pants_name, font=font) if font else 100
                     text_x = pants_x + (pants_img.width - text_width) // 2
                     text_y = pants_y + pants_img.height + 10
-                    if text_x + text_width > self.TARGET_WIDTH - self.ACCESSORY_MARGIN:
-                        text_x = self.TARGET_WIDTH - self.ACCESSORY_MARGIN - text_width
-                    if text_y + font_size > self.TARGET_HEIGHT - self.ACCESSORY_MARGIN: # Using font_size as proxy for text_height
-                        text_y = self.TARGET_HEIGHT - self.ACCESSORY_MARGIN - font_size
+                    if text_x + text_width > self.TARGET_WIDTH - self.SAFE_MARGIN:
+                        text_x = self.TARGET_WIDTH - self.SAFE_MARGIN - text_width
+                    if text_y + font_size > self.TARGET_HEIGHT - self.SAFE_MARGIN: # Using font_size as proxy for text_height
+                        text_y = self.TARGET_HEIGHT - self.SAFE_MARGIN - font_size
                     font_color = font_color_rgb
                     draw.text((text_x, text_y), pants_name, font=font, fill=font_color)
                     occupied_areas.append((text_x, text_y, text_width, font_size))
@@ -481,40 +457,24 @@ class OutfitGeneratorLogic:
                 garment_block_x_end = max(shirt_x + shirt_img.width, pants_x + pants_img.width)
 
                 accessory_zones = []
-                zone_y_start = self.ACCESSORY_MARGIN
-                zone_y_end = self.TARGET_HEIGHT - self.ACCESSORY_MARGIN
+                zone_y_start = self.SAFE_MARGIN
+                zone_y_end = self.TARGET_HEIGHT - self.SAFE_MARGIN
 
-                if chosen_placement == 'center':
-                    # Zone to the left of centered garments
-                    accessory_zones.append({
-                        "id": "left_of_center",
-                        "x_start": self.ACCESSORY_MARGIN,
-                        "x_end": garment_block_x_start - object_spacing,
-                        "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "left"
-                    })
-                    # Zone to the right of centered garments
-                    accessory_zones.append({
-                        "id": "right_of_center",
-                        "x_start": garment_block_x_end + object_spacing,
-                        "x_end": self.TARGET_WIDTH - self.ACCESSORY_MARGIN,
-                        "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "right"
-                    })
-                elif chosen_placement == 'left':
-                    # Primary zone is to the right of left-placed garments
-                    accessory_zones.append({
-                        "id": "right_of_left_garments",
-                        "x_start": garment_block_x_end + object_spacing,
-                        "x_end": self.TARGET_WIDTH - self.ACCESSORY_MARGIN,
-                        "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "right"
-                    })
-                elif chosen_placement == 'right':
-                    # Primary zone is to the left of right-placed garments
-                    accessory_zones.append({
-                        "id": "left_of_right_garments",
-                        "x_start": self.ACCESSORY_MARGIN,
-                        "x_end": garment_block_x_start - object_spacing,
-                        "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "left"
-                    })
+                # Simplified: Define accessory zones as if main garments are always centered
+                # Zone to the left of centered garments
+                accessory_zones.append({
+                    "id": "left_of_center",
+                    "x_start": content_x_start, # Use content_x_start
+                    "x_end": garment_block_x_start - object_spacing,
+                    "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "left"
+                })
+                # Zone to the right of centered garments
+                accessory_zones.append({
+                    "id": "right_of_center",
+                    "x_start": garment_block_x_end + object_spacing,
+                    "x_end": content_x_start + content_width, # Use content_x_start + content_width
+                    "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "right"
+                })
 
                 # Filter out zones that are too narrow or short.
                 accessory_zones = [z for z in accessory_zones if z["x_end"] - z["x_start"] > 50 and z["y_end"] - z["y_start"] > 50]
@@ -523,10 +483,40 @@ class OutfitGeneratorLogic:
                 if not accessory_zones:
                      accessory_zones.append({
                         "id": "full_content_area_fallback",
-                        "x_start": self.ACCESSORY_MARGIN, "x_end": self.TARGET_WIDTH - self.ACCESSORY_MARGIN,
-                        "y_start": self.ACCESSORY_MARGIN, "y_end": self.TARGET_HEIGHT - self.ACCESSORY_MARGIN,
+                        "x_start": self.SAFE_MARGIN, "x_end": self.TARGET_WIDTH - self.SAFE_MARGIN,
+                        "y_start": self.SAFE_MARGIN, "y_end": self.TARGET_HEIGHT - self.SAFE_MARGIN,
                         "target_side": "none"
                     })
+
+                # --- Slot Calculation for Accessory Placement ---
+                num_vertical_slots = 3
+                all_slot_targets = []
+                if accessory_zones: # Ensure accessory_zones is not empty
+                    for zone_def in accessory_zones:
+                        zone_width = zone_def['x_end'] - zone_def['x_start']
+                        if zone_width <= 0: continue
+                        x_center_of_zone = zone_def['x_start'] + zone_width // 2
+
+                        zone_height = zone_def['y_end'] - zone_def['y_start']
+                        if zone_height <= 0: continue
+
+                        # Determine actual number of slots based on zone height
+                        current_num_slots = num_vertical_slots
+                        slot_height = zone_height / current_num_slots
+                        if slot_height < self.MIN_ACCESSORY_DIMENSION_THRESHOLD / 2 and current_num_slots > 1:
+                            current_num_slots = max(1, int(zone_height // (self.MIN_ACCESSORY_DIMENSION_THRESHOLD / 2 ))) # Maximize slots given min height
+                            slot_height = zone_height / current_num_slots if current_num_slots > 0 else zone_height
+
+
+                        for slot_idx in range(current_num_slots):
+                            y_center_of_slot = zone_def['y_start'] + (slot_height * (slot_idx + 0.5))
+                            all_slot_targets.append({
+                                'zone_ref': zone_def,
+                                'x_slot_center': int(x_center_of_zone),
+                                'y_slot_center': int(y_center_of_slot),
+                                'filled_by_accessory': None # For future advanced slot management
+                            })
+                    random.shuffle(all_slot_targets)
 
                 # --- Accessory Selection and Prioritization ---
                 # Selects accessories based on defined priorities and available images.
@@ -545,141 +535,159 @@ class OutfitGeneratorLogic:
 
                 # Dimensioni degli accessori per categoria
                 accessory_sizes = {
-                    "occhiali": (0.15 * size_accessory_factor, 0.15 * size_main_factor),
-                    "wallet": (0.15 * size_accessory_factor, 0.15 * size_main_factor),
-                    "profumi": (0.2 * size_accessory_factor, 0.2 * size_main_factor),
-                    "bracciali": (0.1 * size_accessory_factor, 0.1 * size_main_factor),
-                    "orologi": (0.1 * size_accessory_factor, 0.1 * size_main_factor),
-                    "cinture": (0.2 * size_accessory_factor, 0.2 * size_main_factor),
-                    "scarpe": (0.25 * size_accessory_factor, 0.25 * size_main_factor),
-                    "auto": (0.4 * size_accessory_factor, 0.4 * size_main_factor)
+                    "occhiali": (0.15 * size_accessory_factor, 0.15 * size_accessory_factor),
+                    "wallet": (0.15 * size_accessory_factor, 0.15 * size_accessory_factor),
+                    "profumi": (0.2 * size_accessory_factor, 0.2 * size_accessory_factor),
+                    "bracciali": (0.1 * size_accessory_factor, 0.1 * size_accessory_factor),
+                    "orologi": (0.1 * size_accessory_factor, 0.1 * size_accessory_factor),
+                    "cinture": (0.2 * size_accessory_factor, 0.2 * size_accessory_factor),
+                    "scarpe": (0.25 * size_accessory_factor, 0.25 * size_accessory_factor),
+                    "auto": (0.4 * size_accessory_factor, 0.4 * size_accessory_factor)
                 }
 
                 for accessory in selected_accessories:
                     item_data = random.choice(category_images[accessory])
                     item_img_original = self.fix_image_orientation(Image.open(item_data[0]).convert("RGBA"))
 
-                    # Resize based on category-specific factors, using content_width/height as reference
-                    size_rules = accessory_sizes.get(accessory, (0.15, 0.15)) # Default size if not in rules
-                    max_item_w = int(content_width_for_main_items * size_rules[0] * size_accessory_factor)
-                    max_item_h = int(content_height_for_main_items * size_rules[1] * size_accessory_factor)
+                    # Upscale small accessories
+                    u_width, u_height = item_img_original.width, item_img_original.height
+                    if u_width < self.MIN_ACCESSORY_DIMENSION_THRESHOLD or u_height < self.MIN_ACCESSORY_DIMENSION_THRESHOLD:
+                        if u_width < self.MIN_ACCESSORY_DIMENSION_THRESHOLD and u_width <= u_height:
+                            scale_factor = self.MIN_ACCESSORY_DIMENSION_THRESHOLD / u_width
+                            new_w = self.MIN_ACCESSORY_DIMENSION_THRESHOLD
+                            new_h = int(u_height * scale_factor)
+                            if new_h > 0: item_img_original = item_img_original.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                        elif u_height < self.MIN_ACCESSORY_DIMENSION_THRESHOLD:
+                            scale_factor = self.MIN_ACCESSORY_DIMENSION_THRESHOLD / u_height
+                            new_h = self.MIN_ACCESSORY_DIMENSION_THRESHOLD
+                            new_w = int(u_width * scale_factor)
+                            if new_w > 0: item_img_original = item_img_original.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                    size_rules = accessory_sizes.get(accessory, (0.15 * size_accessory_factor, 0.15 * size_accessory_factor))
+                    max_item_w = int(content_width_for_main_items * size_rules[0])
+                    max_item_h = int(content_height_for_main_items * size_rules[1])
                     item_img = self.resize_image(item_img_original, max_item_w, max_item_h)
                     item_name = item_data[1]
 
-                    # --- Initial Semantic Placement ---
-                    x, y = 0, 0 # Default, will be updated
+                    x, y = 0, 0 # Default placement
+                    placed = False
+                    attempts = 0 # Reset attempts for each accessory
+                    max_attempts_per_zone = 15 # Max attempts per slot or semantic position
+                    max_total_attempts = 50  # Overall attempts for this accessory
 
+                    # 1. Attempt SEMANTIC PLACEMENT for designated items
+                    semantic_x_top_left, semantic_y_top_left = 0, 0 # Will be set if semantic
+                    is_semantic_item = False
                     if accessory == "occhiali":
-                        x = shirt_x + (shirt_img.width - item_img.width) // 2
-                        y = shirt_y - item_img.height - (object_spacing // 4 if object_spacing > 10 else 5) # Place slightly above shirt
+                        is_semantic_item = True
+                        semantic_x_top_left = shirt_x + (shirt_img.width - item_img.width) // 2
+                        semantic_y_top_left = shirt_y - item_img.height - (object_spacing // 2)
                     elif accessory == "cinture":
-                        x = shirt_x + (shirt_img.width - item_img.width) // 2
-                        y = shirt_y + shirt_img.height - item_img.height // 2 + spacing // 3 # Between shirt and pants like
+                        is_semantic_item = True
+                        semantic_x_top_left = pants_x + (pants_img.width - item_img.width) // 2
+                        semantic_y_top_left = pants_y - item_img.height // 3
                     elif accessory == "scarpe":
-                        x = pants_x + (pants_img.width - item_img.width) // 2
-                        y = pants_y + pants_img.height + (object_spacing // 4 if object_spacing > 10 else 5)
-                    elif accessory == "auto": # Special handling for 'auto'
-                        # Try to place in the largest available zone, or fallback to margin-aware placement
+                        is_semantic_item = True
+                        semantic_x_top_left = pants_x + (pants_img.width - item_img.width) // 2
+                        semantic_y_top_left = pants_y + pants_img.height + (object_spacing // 2)
+                    elif accessory == "auto": # 'auto' also has a preferred (though not strictly semantic) placement
+                        is_semantic_item = True
                         if accessory_zones:
                             largest_zone = max(accessory_zones, key=lambda z: (z["x_end"] - z["x_start"]) * (z["y_end"] - z["y_start"]))
-                            x = largest_zone["x_start"] + (largest_zone["x_end"] - largest_zone["x_start"] - item_img.width) // 2
-                            y = largest_zone["y_start"] + (largest_zone["y_end"] - largest_zone["y_start"] - item_img.height) // 2
-                        else: # Fallback if no zones defined (should not happen with the fallback zone logic)
-                            x = random.choice([self.ACCESSORY_MARGIN, self.TARGET_WIDTH - self.ACCESSORY_MARGIN - item_img.width])
-                            y = self.TARGET_HEIGHT - self.ACCESSORY_MARGIN - item_img.height
-                    # For "bracciali", "orologi", "wallet", "profumi", we'll let the zone selection guide initial x,y more directly.
-                    # Their initial x,y will be calculated within the chosen zone during the attempt loop.
-
-                    # --- Collision Avoidance and Zone-based Placement Loop ---
-                    attempts = 0
-                    max_attempts_per_zone = 15
-                    max_total_attempts = 50
-                    placed = False
-
-                    # Store semantic starting point if calculated, otherwise it will be zone-based
-                    semantic_x, semantic_y = x, y
-
-                    # Shuffle zones to try different areas if the first choice is crowded
-                    shuffled_zones = random.sample(accessory_zones, len(accessory_zones)) if accessory_zones else []
-
-                    for current_zone in shuffled_zones:
-                        if placed: break
-
-                        # Determine initial placement within the current_zone
-                        # For specific items, use semantic. For others, center in zone or random.
-                        if accessory in ["occhiali", "cinture", "scarpe"]:
-                            current_x = semantic_x
-                            current_y = semantic_y
-                        elif accessory in ["bracciali", "orologi"]:
-                             # Try to place on the target_side of the zone, near garments
-                            if current_zone["target_side"] == "left":
-                                current_x = current_zone["x_end"] - item_img.width - (object_spacing //2) # Near garment block
-                            elif current_zone["target_side"] == "right":
-                                current_x = current_zone["x_start"] + (object_spacing //2) # Near garment block
-                            else: # center placement
-                                current_x = current_zone["x_start"] + (current_zone["x_end"] - current_zone["x_start"] - item_img.width) // 2
-                            current_y = shirt_y + shirt_img.height // 3 # Example y, adjust per item
-
-                        else: # "wallet", "profumi", etc. - more flexible
-                            current_x = random.randint(current_zone["x_start"], max(current_zone["x_start"], current_zone["x_end"] - item_img.width))
-                            current_y = random.randint(current_zone["y_start"], max(current_zone["y_start"], current_zone["y_end"] - item_img.height))
+                            semantic_x_top_left = largest_zone["x_start"] + (largest_zone["x_end"] - largest_zone["x_start"] - item_img.width) // 2
+                            semantic_y_top_left = largest_zone["y_start"] + (largest_zone["y_end"] - largest_zone["y_start"] - item_img.height) // 2
+                        else: # Fallback if no zones
+                            semantic_x_top_left = content_x_start + (content_width - item_img.width) // 2
+                            semantic_y_top_left = content_y_start + (content_height - item_img.height) // 2
 
 
-                        for attempt_in_zone in range(max_attempts_per_zone):
+                    if is_semantic_item:
+                        for _ in range(max_attempts_per_zone // 2 or 5):
                             if attempts >= max_total_attempts: break
+                            shift_x_rand = random.randint(-10,10)
+                            shift_y_rand = random.randint(-10,10)
+                            final_x = semantic_x_top_left + shift_x_rand
+                            final_y = semantic_y_top_left + shift_y_rand
 
-                            shift_x = random.randint(-15, 15)
-                            shift_y = random.randint(-15, 15)
-                            final_x = current_x + shift_x
-                            final_y = current_y + shift_y
+                            final_x = max(content_x_start, min(final_x, content_x_start + content_width - item_img.width))
+                            final_y = max(content_y_start, min(final_y, content_y_start + content_height - item_img.height))
 
-                            # Clamp to current zone boundaries
-                            final_x = max(current_zone["x_start"], min(final_x, current_zone["x_end"] - item_img.width))
-                            final_y = max(current_zone["y_start"], min(final_y, current_zone["y_end"] - item_img.height))
+                            if self.is_position_safe(final_x, final_y, item_img.width, item_img.height):
+                                item_overlaps = False
+                                for occ_x, occ_y, occ_w, occ_h in occupied_areas:
+                                    if (final_x < occ_x + occ_w + object_spacing and
+                                        final_x + item_img.width > occ_x - object_spacing and
+                                        final_y < occ_y + occ_h + object_spacing and
+                                        final_y + item_img.height > occ_y - object_spacing):
+                                        item_overlaps = True; break
+                                if not item_overlaps:
+                                    x, y = final_x, final_y
+                                    placed = True; break
+                            attempts +=1
 
-                            # Final check against overall canvas safety using ACCESSORY_MARGIN (is_position_safe)
-                            if not self.is_position_safe(final_x, final_y, item_img.width, item_img.height):
+                    # 2. If not placed (or not a semantic item), try SLOT-BASED PLACEMENT
+                    if not placed and all_slot_targets:
+                        for slot_target in all_slot_targets:
+                            current_zone_for_clamping = slot_target['zone_ref']
+                            current_x_base = slot_target['x_slot_center'] - item_img.width // 2
+                            current_y_base = slot_target['y_slot_center'] - item_img.height // 2
+
+                            for _ in range(max_attempts_per_zone):
+                                if attempts >= max_total_attempts: break
+                                shift_x_rand = random.randint(-15, 15)
+                                shift_y_rand = random.randint(-15, 15)
+                                final_x = current_x_base + shift_x_rand
+                                final_y = current_y_base + shift_y_rand
+
+                                final_x = max(current_zone_for_clamping["x_start"], min(final_x, current_zone_for_clamping["x_end"] - item_img.width))
+                                final_y = max(current_zone_for_clamping["y_start"], min(final_y, current_zone_for_clamping["y_end"] - item_img.height))
+
+                                if not self.is_position_safe(final_x, final_y, item_img.width, item_img.height):
+                                    attempts += 1; continue
+                                item_overlaps = False
+                                for occ_x, occ_y, occ_w, occ_h in occupied_areas:
+                                    if (final_x < occ_x + occ_w + object_spacing and
+                                        final_x + item_img.width > occ_x - object_spacing and
+                                        final_y < occ_y + occ_h + object_spacing and
+                                        final_y + item_img.height > occ_y - object_spacing):
+                                        item_overlaps = True; break
+                                if not item_overlaps:
+                                    x, y = final_x, final_y
+                                    placed = True; break
                                 attempts += 1
-                                continue
+                            if placed: break
 
-                            overlaps = False
-                            for occ_x, occ_y, occ_w, occ_h in occupied_areas:
-                                if (final_x < occ_x + occ_w + object_spacing and
-                                    final_x + item_img.width > occ_x - object_spacing and
-                                    final_y < occ_y + occ_h + object_spacing and
-                                    final_y + item_img.height > occ_y - object_spacing):
-                                    overlaps = True
-                                    break
+                    # 3. FALLBACK: If still not placed, try random placement in any valid zone
+                    if not placed and accessory_zones:
+                        shuffled_fallback_zones = random.sample(accessory_zones, len(accessory_zones))
+                        for fallback_zone in shuffled_fallback_zones:
+                            if placed: break
+                            for _ in range(max_attempts_per_zone // 2 or 5):
+                                if attempts >= max_total_attempts: break
+                                current_x_fallback = random.randint(fallback_zone["x_start"], max(fallback_zone["x_start"], fallback_zone["x_end"] - item_img.width))
+                                current_y_fallback = random.randint(fallback_zone["y_start"], max(fallback_zone["y_start"], fallback_zone["y_end"] - item_img.height))
+                                final_x = current_x_fallback
+                                final_y = current_y_fallback
 
-                            if not overlaps:
-                                x, y = final_x, final_y
-                                placed = True
-                                break
-                            attempts += 1
-                        if placed: break
+                                if self.is_position_safe(final_x, final_y, item_img.width, item_img.height):
+                                    item_overlaps = False
+                                    for occ_x, occ_y, occ_w, occ_h in occupied_areas:
+                                        if (final_x < occ_x + occ_w + object_spacing and
+                                            final_x + item_img.width > occ_x - object_spacing and
+                                            final_y < occ_y + occ_h + object_spacing and
+                                            final_y + item_img.height > occ_y - object_spacing):
+                                            item_overlaps = True; break
+                                    if not item_overlaps:
+                                        x, y = final_x, final_y
+                                        placed = True; break
+                                attempts += 1
+                            if placed: break
 
-                    if not placed:
-                        continue
-
-                    canvas.paste(item_img, (x, y), item_img)
-                    occupied_areas.append((x, y, item_img.width, item_img.height))
-
-                    if show_names.get():
-                        text_width = draw.textlength(item_name, font=font) if font else 100 # Get text width
-                        # Ensure text_x is within bounds
-                        text_x = x + (item_img.width - text_width) // 2
-                        text_x = max(self.ACCESSORY_MARGIN, min(text_x, self.TARGET_WIDTH - self.ACCESSORY_MARGIN - text_width))
-
-                        # Ensure text_y is within bounds
-                        text_y = y + item_img.height + 5 # Small gap for text below item
-                        text_y = max(self.ACCESSORY_MARGIN, min(text_y, self.TARGET_HEIGHT - self.ACCESSORY_MARGIN - font_size))
-
-                        # Check if text placement itself is safe (not overlapping other things)
-                        # This is a simplified check; a more robust check would add text bounds to occupied_areas
-                        # For now, rely on the general clamping and hope for the best for text overlaps.
-                        draw.text((text_x, text_y), item_name, font=font, fill=font_color_rgb)
-                        # Optionally, add text bounding box to occupied_areas if text overlap becomes an issue
-                        # occupied_areas.append((text_x, text_y, text_width, font_size))
+                    if placed:
+                        canvas.paste(item_img, (x, y), item_img)
+                        occupied_areas.append((x, y, item_img.width, item_img.height))
+                        if show_names.get():
+                            pass
 
                 # Salva l'immagine
                 # **IMPORTANT**: The watermark logic MUST be executed AFTER all item names are drawn and added to occupied_areas
@@ -825,68 +833,55 @@ class OutfitGeneratorLogic:
 
             canvas.paste(background, (0, 0))
             draw = ImageDraw.Draw(canvas)
+
+            safe_margin = self.SAFE_MARGIN
+            content_x_start = safe_margin
+            content_y_start = safe_margin
+            content_width = self.TARGET_WIDTH - 2 * safe_margin
+            content_height = self.TARGET_HEIGHT - 2 * safe_margin
+
             occupied_areas = [] # Stores (x, y, w, h) of placed items and text
 
             # Calculate max dimensions for main garments based on content area and scaling factors
-            content_width_for_main_items = self.TARGET_WIDTH - 2 * self.ACCESSORY_MARGIN
-            content_height_for_main_items = self.TARGET_HEIGHT - 2 * self.ACCESSORY_MARGIN
+            content_width_for_main_items = content_width # Use new content_width
+            content_height_for_main_items = content_height # Use new content_height
 
-            shirt_max_width = int(content_width_for_main_items * 0.5 * size_main_factor)
-            shirt_max_height = int(content_height_for_main_items * 0.35 * size_main_factor)
-            pants_max_width = int(content_width_for_main_items * 0.5 * size_main_factor)
-            pants_max_height = int(content_height_for_main_items * 0.35 * size_main_factor)
+            # Dimensioni degli oggetti principali (target sizes before aspect ratio preservation)
+            shirt_target_width = int(content_width * (0.6 * size_main_factor))
+            shirt_target_height = int(content_height * (0.4 * size_main_factor))
+            pants_target_width = int(content_width * (0.6 * size_main_factor))
+            pants_target_height = int(content_height * (0.4 * size_main_factor))
 
             # Load and resize main garments
             # Ensure 'maglie' and 'pantaloni' images are available
             if not category_images.get("maglie"): return None # Should be caught earlier
             shirt_data = random.choice(category_images["maglie"])
             shirt_img = self.fix_image_orientation(Image.open(shirt_data[0]).convert("RGBA"))
-            shirt_img = self.resize_image(shirt_img, shirt_max_width, shirt_max_height)
+            shirt_img = self.resize_image(shirt_img, shirt_target_width, shirt_target_height)
             shirt_name = shirt_data[1]
 
             if not category_images.get("pantaloni"): return None # Should be caught earlier
             pants_data = random.choice(category_images["pantaloni"])
             pants_img = self.fix_image_orientation(Image.open(pants_data[0]).convert("RGBA"))
-            pants_img = self.resize_image(pants_img, pants_max_width, pants_max_height)
+            pants_img = self.resize_image(pants_img, pants_target_width, pants_target_height)
             pants_name = pants_data[1]
 
-            # --- Main Garment Placement Strategy ---
-            # Determines if the shirt/pants block is centered, or shifted left/right.
-            placement_options = ['center', 'left', 'right']
-            chosen_placement = random.choice(placement_options) # Randomly select one strategy
-
-            # Usable width and height for content, excluding margins
-            content_width = self.TARGET_WIDTH - 2 * self.ACCESSORY_MARGIN
-            content_height = self.TARGET_HEIGHT - 2 * self.ACCESSORY_MARGIN # For vertical centering
-
-            # Offset for 'left'/'right' placements
-            offset_amount = content_width // 7 # Arbitrary shift amount, 1/7th of content width
-
-            # Calculate X coordinates based on chosen placement
-            if chosen_placement == 'center':
-                shirt_x = self.ACCESSORY_MARGIN + (content_width - shirt_img.width) // 2
-                pants_x = self.ACCESSORY_MARGIN + (content_width - pants_img.width) // 2
-            elif chosen_placement == 'left':
-                base_center_x_shirt = self.ACCESSORY_MARGIN + (content_width - shirt_img.width) // 2
-                base_center_x_pants = self.ACCESSORY_MARGIN + (content_width - pants_img.width) // 2
-                shirt_x = base_center_x_shirt - offset_amount
-                pants_x = base_center_x_pants - offset_amount
-            elif chosen_placement == 'right':
-                base_center_x_shirt = self.ACCESSORY_MARGIN + (content_width - shirt_img.width) // 2
-                base_center_x_pants = self.ACCESSORY_MARGIN + (content_width - pants_img.width) // 2
-                shirt_x = base_center_x_shirt + offset_amount
-                pants_x = base_center_x_pants + offset_amount
-
-            shirt_x = max(self.ACCESSORY_MARGIN, min(shirt_x, self.TARGET_WIDTH - self.ACCESSORY_MARGIN - shirt_img.width))
-            pants_x = max(self.ACCESSORY_MARGIN, min(pants_x, self.TARGET_WIDTH - self.ACCESSORY_MARGIN - pants_img.width))
-
+            # --- Main Garment Placement Strategy (Simplified: Always Centered) ---
             total_garment_height = shirt_img.height + pants_img.height + spacing
-            shirt_y = self.ACCESSORY_MARGIN + (content_height - total_garment_height) // 2
-            shirt_y = max(self.ACCESSORY_MARGIN, shirt_y)
-            if shirt_y + total_garment_height > self.TARGET_HEIGHT - self.ACCESSORY_MARGIN:
-                shirt_y = self.TARGET_HEIGHT - self.ACCESSORY_MARGIN - total_garment_height
-                shirt_y = max(self.ACCESSORY_MARGIN, shirt_y)
+
+            shirt_y = content_y_start + (content_height - total_garment_height) // 2
+            shirt_y = max(content_y_start, shirt_y) # Ensure it doesn't go above content_y_start
+
             pants_y = shirt_y + shirt_img.height + spacing
+
+            shirt_x = content_x_start + (content_width - shirt_img.width) // 2
+            pants_x = content_x_start + (content_width - pants_img.width) // 2
+
+            # Ensure garments are within content boundaries
+            shirt_x = max(content_x_start, min(shirt_x, content_x_start + content_width - shirt_img.width))
+            pants_x = max(content_x_start, min(pants_x, content_x_start + content_width - pants_img.width))
+            shirt_y = max(content_y_start, min(shirt_y, content_y_start + content_height - total_garment_height))
+
 
             canvas.paste(shirt_img, (shirt_x, shirt_y), shirt_img)
             occupied_areas.append((shirt_x, shirt_y, shirt_img.width, shirt_img.height))
@@ -904,8 +899,8 @@ class OutfitGeneratorLogic:
                 text_width_shirt = draw.textlength(shirt_name, font=font) if font else 0
                 text_x_shirt = shirt_x + (shirt_img.width - text_width_shirt) // 2
                 text_y_shirt = shirt_y + shirt_img.height + 5 # Small gap
-                text_x_shirt = max(self.ACCESSORY_MARGIN, min(text_x_shirt, self.TARGET_WIDTH - self.ACCESSORY_MARGIN - text_width_shirt))
-                text_y_shirt = max(self.ACCESSORY_MARGIN, min(text_y_shirt, self.TARGET_HEIGHT - self.ACCESSORY_MARGIN - font_size))
+                text_x_shirt = max(self.SAFE_MARGIN, min(text_x_shirt, self.TARGET_WIDTH - self.SAFE_MARGIN - text_width_shirt))
+                text_y_shirt = max(self.SAFE_MARGIN, min(text_y_shirt, self.TARGET_HEIGHT - self.SAFE_MARGIN - font_size))
                 draw.text((text_x_shirt, text_y_shirt), shirt_name, font=font, fill=font_color_rgb)
                 if text_width_shirt > 0 :
                     occupied_areas.append((text_x_shirt, text_y_shirt, text_width_shirt, font_size))
@@ -935,8 +930,8 @@ class OutfitGeneratorLogic:
                 text_width_pants = draw.textlength(pants_name, font=font) if font else 0
                 text_x_pants = pants_x + (pants_img.width - text_width_pants) // 2
                 text_y_pants = pants_y + pants_img.height + 5
-                text_x_pants = max(self.ACCESSORY_MARGIN, min(text_x_pants, self.TARGET_WIDTH - self.ACCESSORY_MARGIN - text_width_pants))
-                text_y_pants = max(self.ACCESSORY_MARGIN, min(text_y_pants, self.TARGET_HEIGHT - self.ACCESSORY_MARGIN - font_size))
+                text_x_pants = max(self.SAFE_MARGIN, min(text_x_pants, self.TARGET_WIDTH - self.SAFE_MARGIN - text_width_pants))
+                text_y_pants = max(self.SAFE_MARGIN, min(text_y_pants, self.TARGET_HEIGHT - self.SAFE_MARGIN - font_size))
                 draw.text((text_x_pants, text_y_pants), pants_name, font=font, fill=font_color_rgb)
                 if text_width_pants > 0:
                     occupied_areas.append((text_x_pants, text_y_pants, text_width_pants, font_size))
@@ -954,27 +949,64 @@ class OutfitGeneratorLogic:
             garment_block_x_start = min(shirt_x, pants_x)
             garment_block_x_end = max(shirt_x + shirt_img.width, pants_x + pants_img.width)
             accessory_zones = []
-            zone_y_start = self.ACCESSORY_MARGIN
-            zone_y_end = self.TARGET_HEIGHT - self.ACCESSORY_MARGIN # Full height within margins
+            zone_y_start = content_y_start # Use content_y_start
+            zone_y_end = content_y_start + content_height # Use content_y_start + content_height
 
-            if chosen_placement == 'center':
-                # Zone to the left of centered garments
-                accessory_zones.append({"id": "left_of_center", "x_start": self.ACCESSORY_MARGIN, "x_end": garment_block_x_start - object_spacing, "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "left"})
-                # Zone to the right of centered garments
-                accessory_zones.append({"id": "right_of_center", "x_start": garment_block_x_end + object_spacing, "x_end": self.TARGET_WIDTH - self.ACCESSORY_MARGIN, "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "right"})
-            elif chosen_placement == 'left':
-                # Primary zone is to the right of left-placed garments
-                accessory_zones.append({"id": "right_of_left_garments", "x_start": garment_block_x_end + object_spacing, "x_end": self.TARGET_WIDTH - self.ACCESSORY_MARGIN, "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "right"})
-            elif chosen_placement == 'right':
-                # Primary zone is to the left of right-placed garments
-                accessory_zones.append({"id": "left_of_right_garments", "x_start": self.ACCESSORY_MARGIN, "x_end": garment_block_x_start - object_spacing, "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "left"})
+            # Simplified: Define accessory zones as if main garments are always centered
+            # Zone to the left of centered garments
+            accessory_zones.append({
+                "id": "left_of_center",
+                "x_start": content_x_start,
+                "x_end": garment_block_x_start - object_spacing,
+                "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "left"
+            })
+            # Zone to the right of centered garments
+            accessory_zones.append({
+                "id": "right_of_center",
+                "x_start": garment_block_x_end + object_spacing,
+                "x_end": content_x_start + content_width,
+                "y_start": zone_y_start, "y_end": zone_y_end, "target_side": "right"
+            })
 
             # Filter out zones that are too small (e.g., if garments + spacing are very wide)
             accessory_zones = [z for z in accessory_zones if z["x_end"] - z["x_start"] > 50 and z["y_end"] - z["y_start"] > 50] # Min 50px usable width/height
 
             # Fallback if no specific zones are valid (e.g., garments too wide)
-            if not accessory_zones:
-                accessory_zones.append({"id": "full_content_area_fallback", "x_start": self.ACCESSORY_MARGIN, "x_end": self.TARGET_WIDTH - self.ACCESSORY_MARGIN, "y_start": self.ACCESSORY_MARGIN, "y_end": self.TARGET_HEIGHT - self.ACCESSORY_MARGIN, "target_side": "none"})
+            if not accessory_zones: # This should ideally not be hit if main garments are reasonably sized
+                accessory_zones.append({
+                    "id": "full_content_area_fallback",
+                    "x_start": content_x_start, "x_end": content_x_start + content_width,
+                    "y_start": content_y_start, "y_end": content_y_start + content_height,
+                    "target_side": "none"
+                })
+
+            # --- Slot Calculation for Accessory Placement ---
+            num_vertical_slots = 3
+            all_slot_targets = []
+            if accessory_zones: # Ensure accessory_zones is not empty
+                for zone_def in accessory_zones:
+                    zone_width = zone_def['x_end'] - zone_def['x_start']
+                    if zone_width <= 0: continue
+                    x_center_of_zone = zone_def['x_start'] + zone_width // 2
+
+                    zone_height = zone_def['y_end'] - zone_def['y_start']
+                    if zone_height <= 0: continue
+
+                    current_num_slots = num_vertical_slots
+                    slot_height = zone_height / current_num_slots
+                    if slot_height < self.MIN_ACCESSORY_DIMENSION_THRESHOLD / 2 and current_num_slots > 1:
+                        current_num_slots = max(1, int(zone_height // (self.MIN_ACCESSORY_DIMENSION_THRESHOLD / 2 )))
+                        slot_height = zone_height / current_num_slots if current_num_slots > 0 else zone_height
+
+                    for slot_idx in range(current_num_slots):
+                        y_center_of_slot = zone_def['y_start'] + (slot_height * (slot_idx + 0.5))
+                        all_slot_targets.append({
+                            'zone_ref': zone_def,
+                            'x_slot_center': int(x_center_of_zone),
+                            'y_slot_center': int(y_center_of_slot),
+                            'filled_by_accessory': None
+                        })
+                random.shuffle(all_slot_targets)
 
             # --- Accessory Selection by Priority ---
             # Selects which accessories to attempt to place based on predefined priorities.
@@ -992,101 +1024,185 @@ class OutfitGeneratorLogic:
             for accessory in selected_accessories:
                 item_data = random.choice(category_images[accessory]) # Pick a random item from the chosen category
                 item_img_original = self.fix_image_orientation(Image.open(item_data[0]).convert("RGBA"))
+
+                # Upscale small accessories before further processing
+                u_width, u_height = item_img_original.width, item_img_original.height
+                #did_upscale = False # Not strictly needed but can be useful for debugging
+                if u_width < self.MIN_ACCESSORY_DIMENSION_THRESHOLD or u_height < self.MIN_ACCESSORY_DIMENSION_THRESHOLD:
+                    if u_width < self.MIN_ACCESSORY_DIMENSION_THRESHOLD and u_width <= u_height: # Width is smallest or equal and below threshold
+                        scale_factor = self.MIN_ACCESSORY_DIMENSION_THRESHOLD / u_width
+                        new_w = self.MIN_ACCESSORY_DIMENSION_THRESHOLD
+                        new_h = int(u_height * scale_factor)
+                        if new_h > 0:
+                            item_img_original = item_img_original.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                            #did_upscale = True
+                    elif u_height < self.MIN_ACCESSORY_DIMENSION_THRESHOLD: # Height is smallest and below threshold
+                        scale_factor = self.MIN_ACCESSORY_DIMENSION_THRESHOLD / u_height
+                        new_h = self.MIN_ACCESSORY_DIMENSION_THRESHOLD
+                        new_w = int(u_width * scale_factor)
+                        if new_w > 0:
+                            item_img_original = item_img_original.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                            #did_upscale = True
+
                 size_rules = accessory_sizes.get(accessory, (0.15, 0.15))
                 max_item_w = int(content_width_for_main_items * size_rules[0] * size_accessory_factor)
                 max_item_h = int(content_height_for_main_items * size_rules[1] * size_accessory_factor)
                 item_img = self.resize_image(item_img_original, max_item_w, max_item_h)
                 item_name = item_data[1]
 
-                x_acc, y_acc = 0,0 # Default for accessory x,y before semantic placement
+                x_acc, y_acc = 0,0
+                placed_acc = False
+                attempts_acc = 0
+                max_attempts_per_strategy_step = 10
+                max_total_attempts_acc = 50
+
+                # 1. Attempt SEMANTIC PLACEMENT for designated items
+                semantic_x_top_left, semantic_y_top_left = 0,0
+                is_semantic_item = False
                 if accessory == "occhiali":
-                    x_acc = shirt_x + (shirt_img.width - item_img.width) // 2
-                    y_acc = shirt_y - item_img.height - (object_spacing // 4 if object_spacing > 10 else 5)
+                    is_semantic_item = True
+                    semantic_x_top_left = shirt_x + (shirt_img.width - item_img.width) // 2
+                    semantic_y_top_left = shirt_y - item_img.height - (object_spacing // 2)
                 elif accessory == "cinture":
-                    x_acc = shirt_x + (shirt_img.width - item_img.width) // 2
-                    y_acc = shirt_y + shirt_img.height - item_img.height // 2 + spacing // 3
+                    is_semantic_item = True
+                    semantic_x_top_left = pants_x + (pants_img.width - item_img.width) // 2
+                    semantic_y_top_left = pants_y - item_img.height // 3
                 elif accessory == "scarpe":
-                    x_acc = pants_x + (pants_img.width - item_img.width) // 2
-                    y_acc = pants_y + pants_img.height + (object_spacing // 4 if object_spacing > 10 else 5)
+                    is_semantic_item = True
+                    semantic_x_top_left = pants_x + (pants_img.width - item_img.width) // 2
+                    semantic_y_top_left = pants_y + pants_img.height + (object_spacing // 2)
                 elif accessory == "auto":
+                    is_semantic_item = True
                     if accessory_zones:
                         largest_zone = max(accessory_zones, key=lambda z: (z["x_end"] - z["x_start"]) * (z["y_end"] - z["y_start"]))
-                        x_acc = largest_zone["x_start"] + (largest_zone["x_end"] - largest_zone["x_start"] - item_img.width) // 2
-                        y_acc = largest_zone["y_start"] + (largest_zone["y_end"] - largest_zone["y_start"] - item_img.height) // 2
+                        semantic_x_top_left = largest_zone["x_start"] + (largest_zone["x_end"] - largest_zone["x_start"] - item_img.width) // 2
+                        semantic_y_top_left = largest_zone["y_start"] + (largest_zone["y_end"] - largest_zone["y_start"] - item_img.height) // 2
                     else:
-                        x_acc = random.choice([self.ACCESSORY_MARGIN, self.TARGET_WIDTH - self.ACCESSORY_MARGIN - item_img.width])
-                        y_acc = self.TARGET_HEIGHT - self.ACCESSORY_MARGIN - item_img.height
+                        semantic_x_top_left = content_x_start + (content_width - item_img.width) // 2
+                        semantic_y_top_left = content_y_start + (content_height - item_img.height) // 2
 
-                attempts_acc = 0
-                max_attempts_per_zone_acc = 15
-                max_total_attempts_acc = 50
-                placed_acc = False
-                semantic_x_acc, semantic_y_acc = x_acc, y_acc
-                shuffled_zones_acc = random.sample(accessory_zones, len(accessory_zones)) if accessory_zones else []
-
-                for current_zone_acc in shuffled_zones_acc:
-                    if placed_acc: break
-                    current_x_loop, current_y_loop = x_acc, y_acc # Initialize with semantic or default
-                    if accessory in ["occhiali", "cinture", "scarpe", "auto"]: # For these, semantic x,y is primary guide
-                         current_x_loop, current_y_loop = semantic_x_acc, semantic_y_acc
-                    elif accessory in ["bracciali", "orologi"]:
-                        if current_zone_acc["target_side"] == "left": current_x_loop = current_zone_acc["x_end"] - item_img.width - (object_spacing //2)
-                        elif current_zone_acc["target_side"] == "right": current_x_loop = current_zone_acc["x_start"] + (object_spacing //2)
-                        else: current_x_loop = current_zone_acc["x_start"] + (current_zone_acc["x_end"] - current_zone_acc["x_start"] - item_img.width) // 2
-                        current_y_loop = shirt_y + shirt_img.height // 3 # Example y
-                    else: # wallet, profumi
-                        current_x_loop = random.randint(current_zone_acc["x_start"], max(current_zone_acc["x_start"], current_zone_acc["x_end"] - item_img.width))
-                        current_y_loop = random.randint(current_zone_acc["y_start"], max(current_zone_acc["y_start"], current_zone_acc["y_end"] - item_img.height))
-
-                    for attempt_in_zone_acc in range(max_attempts_per_zone_acc):
+                if is_semantic_item:
+                    for _ in range(max_attempts_per_strategy_step // 2 or 3):
                         if attempts_acc >= max_total_attempts_acc: break
-                        shift_x_acc = random.randint(-15, 15)
-                        shift_y_acc = random.randint(-15, 15)
-                        final_x_acc = current_x_loop + shift_x_acc
-                        final_y_acc = current_y_loop + shift_y_acc
-                        final_x_acc = max(current_zone_acc["x_start"], min(final_x_acc, current_zone_acc["x_end"] - item_img.width))
-                        final_y_acc = max(current_zone_acc["y_start"], min(final_y_acc, current_zone_acc["y_end"] - item_img.height))
-                        if not self.is_position_safe(final_x_acc, final_y_acc, item_img.width, item_img.height):
-                            attempts_acc += 1; continue
-                        overlaps_acc = False
-                        for occ_x, occ_y, occ_w, occ_h in occupied_areas:
-                            if (final_x_acc < occ_x + occ_w + object_spacing and final_x_acc + item_img.width > occ_x - object_spacing and final_y_acc < occ_y + occ_h + object_spacing and final_y_acc + item_img.height > occ_y - object_spacing):
-                                overlaps_acc = True; break
-                        if not overlaps_acc:
-                            x_acc, y_acc = final_x_acc, final_y_acc; placed_acc = True; break
-                        attempts_acc += 1
-                    if placed_acc: break
-                if not placed_acc: continue
+                        shift_x_rand = random.randint(-10,10)
+                        shift_y_rand = random.randint(-10,10)
+                        final_x = semantic_x_top_left + shift_x_rand
+                        final_y = semantic_y_top_left + shift_y_rand
 
-                canvas.paste(item_img, (x_acc, y_acc), item_img)
-                occupied_areas.append((x_acc, y_acc, item_img.width, item_img.height))
-                # Contrast check for accessory
-                acc_box_on_canvas = (x_acc, y_acc, x_acc + item_img.width, y_acc + item_img.height)
-                avg_acc_color = self.get_average_color(item_img) # Pass the item's own image
-                avg_bg_color_acc = self.get_average_color(canvas, box=acc_box_on_canvas)
-                lum_acc = self.get_relative_luminance(avg_acc_color)
-                lum_bg_acc = self.get_relative_luminance(avg_bg_color_acc)
-                contrast_acc = self.get_contrast_ratio(lum_acc, lum_bg_acc)
-                if contrast_acc < self.MIN_CONTRAST_THRESHOLD:
-                    print(f"Warning: Low contrast ({contrast_acc:.2f}) for ACCESSORY '{item_name}'. Item color: {avg_acc_color}, Bg: {avg_bg_color_acc}")
+                        final_x = max(content_x_start, min(final_x, content_x_start + content_width - item_img.width))
+                        final_y = max(content_y_start, min(final_y, content_y_start + content_height - item_img.height))
 
-                if show_names.get():
-                    text_width_acc = draw.textlength(item_name, font=font) if font else 0
-                    text_x_acc = x_acc + (item_img.width - text_width_acc) // 2
-                    text_y_acc = y_acc + item_img.height + 5
-                    text_x_acc = max(self.ACCESSORY_MARGIN, min(text_x_acc, self.TARGET_WIDTH - self.ACCESSORY_MARGIN - text_width_acc))
-                    text_y_acc = max(self.ACCESSORY_MARGIN, min(text_y_acc, self.TARGET_HEIGHT - self.ACCESSORY_MARGIN - font_size))
-                    draw.text((text_x_acc, text_y_acc), item_name, font=font, fill=font_color_rgb)
-                    if text_width_acc > 0:
-                        occupied_areas.append((text_x_acc, text_y_acc, text_width_acc, font_size))
-                        # Contrast check for accessory text
-                        text_bbox_acc = (text_x_acc, text_y_acc, text_x_acc + text_width_acc, text_y_acc + font_size)
-                        avg_text_bg_color_acc = self.get_average_color(canvas, box=text_bbox_acc)
-                        lum_text_acc = self.get_relative_luminance(font_color_rgb)
-                        lum_text_bg_acc = self.get_relative_luminance(avg_text_bg_color_acc)
-                        text_contrast_acc = self.get_contrast_ratio(lum_text_acc, lum_text_bg_acc)
-                        if text_contrast_acc < self.MIN_TEXT_CONTRAST_THRESHOLD:
-                             print(f"Warning: Low contrast ({text_contrast_acc:.2f}) for ACCESSORY TEXT '{item_name}'. Text: {font_color_rgb}, Bg: {avg_text_bg_color_acc}")
+                        if self.is_position_safe(final_x, final_y, item_img.width, item_img.height):
+                            item_overlaps = False
+                            for occ_x_loop, occ_y_loop, occ_w_loop, occ_h_loop in occupied_areas:
+                                if (final_x < occ_x_loop + occ_w_loop + object_spacing and
+                                    final_x + item_img.width > occ_x_loop - object_spacing and
+                                    final_y < occ_y_loop + occ_h_loop + object_spacing and
+                                    final_y + item_img.height > occ_y_loop - object_spacing):
+                                    item_overlaps = True; break
+                            if not item_overlaps:
+                                x_acc, y_acc = final_x, final_y
+                                placed_acc = True; break
+                        attempts_acc +=1
+
+                # 2. If not placed (or not a semantic item), try SLOT-BASED PLACEMENT
+                if not placed_acc and all_slot_targets:
+                    for slot_target in all_slot_targets:
+                        if attempts_acc >= max_total_attempts_acc: break
+                        if placed_acc: break
+
+                        current_zone_for_clamping = slot_target['zone_ref']
+                        current_x_base = slot_target['x_slot_center'] - item_img.width // 2
+                        current_y_base = slot_target['y_slot_center'] - item_img.height // 2
+
+                        for _ in range(max_attempts_per_strategy_step):
+                            if attempts_acc >= max_total_attempts_acc: break
+                            shift_x_rand = random.randint(-15, 15)
+                            shift_y_rand = random.randint(-15, 15)
+                            final_x = current_x_base + shift_x_rand
+                            final_y = current_y_base + shift_y_rand
+
+                            final_x = max(current_zone_for_clamping["x_start"], min(final_x, current_zone_for_clamping["x_end"] - item_img.width))
+                            final_y = max(current_zone_for_clamping["y_start"], min(final_y, current_zone_for_clamping["y_end"] - item_img.height))
+
+                            if not self.is_position_safe(final_x, final_y, item_img.width, item_img.height):
+                                attempts_acc += 1; continue
+                            item_overlaps = False
+                            for occ_x_loop, occ_y_loop, occ_w_loop, occ_h_loop in occupied_areas:
+                                if (final_x < occ_x_loop + occ_w_loop + object_spacing and
+                                    final_x + item_img.width > occ_x_loop - object_spacing and
+                                    final_y < occ_y_loop + occ_h_loop + object_spacing and
+                                    final_y + item_img.height > occ_y_loop - object_spacing):
+                                    item_overlaps = True; break
+                            if not item_overlaps:
+                                x_acc, y_acc = final_x, final_y
+                                placed_acc = True; break
+                            attempts_acc += 1
+                        if placed_acc: break
+
+                # 3. FALLBACK: If still not placed, try random placement
+                if not placed_acc and accessory_zones:
+                    shuffled_fallback_zones = random.sample(accessory_zones, len(accessory_zones))
+                    for fallback_zone in shuffled_fallback_zones:
+                        if attempts_acc >= max_total_attempts_acc: break
+                        if placed_acc: break
+                        for _ in range(max_attempts_per_strategy_step // 2 or 3):
+                            if attempts_acc >= max_total_attempts_acc: break
+
+                            fallback_x_max_coord = max(fallback_zone["x_start"]+1, fallback_zone["x_end"] - item_img.width)
+                            fallback_y_max_coord = max(fallback_zone["y_start"]+1, fallback_zone["y_end"] - item_img.height)
+                            if fallback_zone["x_start"] >= fallback_x_max_coord or fallback_zone["y_start"] >= fallback_y_max_coord:
+                                continue
+
+                            current_x_fallback = random.randint(fallback_zone["x_start"], fallback_x_max_coord)
+                            current_y_fallback = random.randint(fallback_zone["y_start"], fallback_y_max_coord)
+                            final_x = current_x_fallback
+                            final_y = current_y_fallback
+
+                            if self.is_position_safe(final_x, final_y, item_img.width, item_img.height):
+                                item_overlaps = False
+                                for occ_x_loop, occ_y_loop, occ_w_loop, occ_h_loop in occupied_areas:
+                                    if (final_x < occ_x_loop + occ_w_loop + object_spacing and
+                                        final_x + item_img.width > occ_x_loop - object_spacing and
+                                        final_y < occ_y_loop + occ_h_loop + object_spacing and
+                                        final_y + item_img.height > occ_y_loop - object_spacing):
+                                        item_overlaps = True; break
+                                if not item_overlaps:
+                                    x_acc, y_acc = final_x, final_y
+                                    placed_acc = True; break
+                            attempts_acc += 1
+                        if placed_acc: break
+
+                if placed_acc:
+                    canvas.paste(item_img, (x_acc, y_acc), item_img)
+                    occupied_areas.append((x_acc, y_acc, item_img.width, item_img.height))
+
+                    acc_box_on_canvas = (x_acc, y_acc, x_acc + item_img.width, y_acc + item_img.height)
+                    avg_acc_color = self.get_average_color(item_img)
+                    avg_bg_color_acc = self.get_average_color(canvas, box=acc_box_on_canvas)
+                    lum_acc = self.get_relative_luminance(avg_acc_color)
+                    lum_bg_acc = self.get_relative_luminance(avg_bg_color_acc)
+                    contrast_acc = self.get_contrast_ratio(lum_acc, lum_bg_acc)
+                    if contrast_acc < self.MIN_CONTRAST_THRESHOLD:
+                        print(f"Warning: Low contrast ({contrast_acc:.2f}) for ACCESSORY '{item_name}'. Item color: {avg_acc_color}, Bg: {avg_bg_color_acc}")
+
+                    if show_names.get():
+                        text_width_acc = draw.textlength(item_name, font=font) if font else 0
+                        text_x_acc_name = x_acc + (item_img.width - text_width_acc) // 2
+                        text_y_acc_name = y_acc + item_img.height + 5
+                        text_x_acc_name = max(self.SAFE_MARGIN, min(text_x_acc_name, self.TARGET_WIDTH - self.SAFE_MARGIN - text_width_acc))
+                        text_y_acc_name = max(self.SAFE_MARGIN, min(text_y_acc_name, self.TARGET_HEIGHT - self.SAFE_MARGIN - font_size))
+                        draw.text((text_x_acc_name, text_y_acc_name), item_name, font=font, fill=font_color_rgb)
+                        if text_width_acc > 0:
+                            occupied_areas.append((text_x_acc_name, text_y_acc_name, text_width_acc, font_size))
+                            text_bbox_acc = (text_x_acc_name, text_y_acc_name, text_x_acc_name + text_width_acc, text_y_acc_name + font_size)
+                            avg_text_bg_color_acc = self.get_average_color(canvas, box=text_bbox_acc)
+                            lum_text_acc = self.get_relative_luminance(font_color_rgb)
+                            lum_text_bg_acc = self.get_relative_luminance(avg_text_bg_color_acc)
+                            text_contrast_acc = self.get_contrast_ratio(lum_text_acc, lum_text_bg_acc)
+                            if text_contrast_acc < self.MIN_TEXT_CONTRAST_THRESHOLD:
+                                 print(f"Warning: Low contrast ({text_contrast_acc:.2f}) for ACCESSORY TEXT '{item_name}'. Text: {font_color_rgb}, Bg: {avg_text_bg_color_acc}")
+                # else: accessory not placed, continue
 
             # Watermark (copied and adapted)
             if use_watermark.get() and watermark_path_var.get():
